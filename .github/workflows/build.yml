@@ -1,0 +1,66 @@
+name: build
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - name: ghc-wasm-meta
+        run: |
+          pushd "$(mktemp -d)"
+          curl -L https://gitlab.haskell.org/haskell-wasm/ghc-wasm-meta/-/archive/master/ghc-wasm-meta-master.tar.gz | tar xz --strip-components=1
+          PREFIX=/tmp/.ghc-wasm SKIP_GHC=1 ./setup.sh
+          /tmp/.ghc-wasm/add_to_github_path.sh
+          echo "WASI_SDK_PREFIX=/tmp/.ghc-wasm/wasi-sdk" >> $GITHUB_ENV
+          popd
+
+      - name: build-zstd
+        run: |
+          pushd "$(mktemp -d)"
+          curl -L https://github.com/haskell-wasm/zstd/archive/refs/heads/release.tar.gz | tar xz --strip-components=1
+          ./install-wasi.sh
+          popd
+
+      - name: build-libarchive
+        run: |
+          pushd "$(mktemp -d)"
+          curl -L https://github.com/haskell-wasm/libarchive/archive/refs/heads/patch/3.8.tar.gz | tar xz --strip-components=1
+          ./install-wasi.sh
+          popd
+
+      - name: test-playground
+        run: |
+          mkdir ghc-in-browser
+          curl -L https://github.com/haskell-wasm/ghc-in-browser/archive/refs/heads/gh-pages.tar.gz | tar xz --strip-components=1 -C ghc-in-browser
+          pushd ghc-in-browser
+
+          cp /tmp/wasi/bin/bsdtar.wasm .
+          sed -i -e "s|https://haskell-wasm.github.io/bsdtar-wasm/bsdtar.wasm|./bsdtar.wasm|" index.html
+          curl -L https://gitlab.haskell.org/haskell-wasm/ghc/-/raw/ghc-9.14/.gitlab/hello.hs -O
+          curl -L https://gitlab.haskell.org/haskell-wasm/ghc/-/raw/ghc-9.14/testsuite/tests/ghc-api-browser/playground001.js -o test.js
+          sed -i -e 's|".mjs": "application/javascript",|".mjs": "application/javascript", ".wasm": "application/wasm"|' test.js
+
+          chmod +x test.js
+          ./test.js '{"browser":"chrome","executablePath":"/usr/bin/google-chrome-stable","args":["--no-sandbox"]}' | grep -F 'main = putStrLn "hello world"'
+          popd
+
+      - name: upload-pages-artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: /tmp/wasi/bin
+          retention-days: 90
+
+      - name: deploy-pages
+        uses: actions/deploy-pages@v4
+        if: github.event_name == 'push' && github.ref_name == 'master'
