@@ -1,0 +1,46 @@
+name: build
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - name: ghc-wasm-meta
+        run: |
+          pushd "$(mktemp -d)"
+          curl -L https://gitlab.haskell.org/haskell-wasm/ghc-wasm-meta/-/archive/master/ghc-wasm-meta-master.tar.gz | tar xz --strip-components=1
+          PREFIX=/tmp/.ghc-wasm SKIP_GHC=1 ./setup.sh
+          /tmp/.ghc-wasm/add_to_github_path.sh
+          echo "WASI_SDK_PREFIX=/tmp/.ghc-wasm/wasi-sdk" >> $GITHUB_ENV
+          popd
+
+      - name: build-zstd
+        run: |
+          pushd "$(mktemp -d)"
+          curl -L https://github.com/haskell-wasm/zstd/archive/refs/heads/release.tar.gz | tar xz --strip-components=1
+          ./install-wasi.sh
+          popd
+
+      - name: build-libarchive
+        run: |
+          pushd "$(mktemp -d)"
+          curl -L https://github.com/haskell-wasm/libarchive/archive/refs/heads/patch/3.8.tar.gz | tar xz --strip-components=1
+          ./install-wasi.sh
+          popd
+
+      - name: upload-pages-artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: /tmp/wasi/bin
+          retention-days: 90
+
+      - name: deploy-pages
+        uses: actions/deploy-pages@v4
